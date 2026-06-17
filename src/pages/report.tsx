@@ -158,13 +158,20 @@ export default function SkuFlatReportWithUomPage() {
         cmPacking,
         cmFg,
         cmSku,
-        // 4. Kingsforth Line Queries
+        // 4. Kingsforth Sotanghon / Shared Core Queries
         kfPacking,
         kfFg,
         kfSeasoning,
         kfSku,
+        // 5. Kingsforth Specific Subdivision Queries
+        kfHePacking,
+        kfHeFg,
+        kfCantonPacking,
+        kfCantonFg,
+        kfSfPacking,
+        kfSfFg,
       ] = await Promise.all([
-        // Bihon blocks
+        // --- Bihon blocks ---
         isAll || department === "bihon"
           ? supabase
               .from("bh_cooking")
@@ -189,7 +196,7 @@ export default function SkuFlatReportWithUomPage() {
               .select("item_code, item_description, uom")
           : Promise.resolve({ data: [] }),
 
-        // Snackfood blocks
+        // --- Snackfood blocks ---
         isAll || department === "snackfood"
           ? supabase
               .from("sf_blending")
@@ -236,7 +243,7 @@ export default function SkuFlatReportWithUomPage() {
           ? supabase.from("sf_sku").select("item_code, item_description, uom")
           : Promise.resolve({ data: [] }),
 
-        // Catmon blocks
+        // --- Catmon blocks ---
         isAll || department === "catmon"
           ? supabase
               .from("catmon_mixing")
@@ -267,14 +274,14 @@ export default function SkuFlatReportWithUomPage() {
               .select("item_code, item_description, uom")
           : Promise.resolve({ data: [] }),
 
-        // Kingsforth blocks (Handles kf_ options or inclusion in "all")
-        isAll || department.startsWith("kf_")
+        // --- Kingsforth Sotanghon / Shared Core blocks ---
+        isAll || department === "kf_sotanghon"
           ? supabase
               .from("kf_packing")
               .select("item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
-        isAll || department.startsWith("kf_")
+        isAll || department === "kf_sotanghon"
           ? supabase
               .from("kf_fg")
               .select("item_code, qty")
@@ -288,6 +295,48 @@ export default function SkuFlatReportWithUomPage() {
           : Promise.resolve({ data: [] }),
         isAll || department.startsWith("kf_")
           ? supabase.from("kf_sku").select("item_code, item_description, uom")
+          : Promise.resolve({ data: [] }),
+
+        // --- Kingsforth Hobe Express blocks ---
+        isAll || department === "kf_hobe"
+          ? supabase
+              .from("kf_he_packing")
+              .select("item_code, qty")
+              .in("prod_id", generatedProdIds)
+          : Promise.resolve({ data: [] }),
+        isAll || department === "kf_hobe"
+          ? supabase
+              .from("kf_he_fg")
+              .select("item_code, qty")
+              .in("prod_id", generatedProdIds)
+          : Promise.resolve({ data: [] }),
+
+        // --- Kingsforth Canton blocks ---
+        isAll || department === "kf_canton"
+          ? supabase
+              .from("kf_canton_packing")
+              .select("item_code, qty")
+              .in("prod_id", generatedProdIds)
+          : Promise.resolve({ data: [] }),
+        isAll || department === "kf_canton"
+          ? supabase
+              .from("kf_canton_fg")
+              .select("item_code, qty")
+              .in("prod_id", generatedProdIds)
+          : Promise.resolve({ data: [] }),
+
+        // --- Kingsforth Snackfood blocks ---
+        isAll || department === "kf_sf"
+          ? supabase
+              .from("kf_sf_packing")
+              .select("item_code, qty")
+              .in("prod_id", generatedProdIds)
+          : Promise.resolve({ data: [] }),
+        isAll || department === "kf_sf"
+          ? supabase
+              .from("kf_sf_fg")
+              .select("item_code, qty")
+              .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
       ])
 
@@ -324,6 +373,7 @@ export default function SkuFlatReportWithUomPage() {
       kfSku.data?.forEach((s) => getOrCreateRow(s.item_code))
 
       // --- Line Aggregation Implementations ---
+      // Bihon
       bhCooking.data?.forEach((r) => {
         getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
       })
@@ -334,6 +384,7 @@ export default function SkuFlatReportWithUomPage() {
         getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
       })
 
+      // Snackfood
       sfBlend.data?.forEach((r) => {
         getOrCreateRow(r.item_code).combined_value += Number(r.usage || 0)
       })
@@ -356,6 +407,7 @@ export default function SkuFlatReportWithUomPage() {
         getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
       })
 
+      // Catmon
       cmMix.data?.forEach((r) => {
         getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
       })
@@ -369,17 +421,40 @@ export default function SkuFlatReportWithUomPage() {
         getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
       })
 
+      // Kingsforth Sotanghon
       kfPacking.data?.forEach((r) => {
         getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
       })
       kfFg.data?.forEach((r) => {
         getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
       })
-      if (department === "all" || department === "kf_sotanghon") {
-        kfSeasoning.data?.forEach((r) => {
-          getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
-        })
-      }
+      kfSeasoning.data?.forEach((r) => {
+        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+      })
+
+      // Kingsforth Hobe Express
+      kfHePacking.data?.forEach((r) => {
+        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+      })
+      kfHeFg.data?.forEach((r) => {
+        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+      })
+
+      // Kingsforth Canton
+      kfCantonPacking.data?.forEach((r) => {
+        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+      })
+      kfCantonFg.data?.forEach((r) => {
+        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+      })
+
+      // Kingsforth Snackfood
+      kfSfPacking.data?.forEach((r) => {
+        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+      })
+      kfSfFg.data?.forEach((r) => {
+        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+      })
 
       // Filter down view to exclude zero activity lines
       const resultingRows = Array.from(localAggregationMap.values()).filter(
