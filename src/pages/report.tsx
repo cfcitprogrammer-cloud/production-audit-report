@@ -45,6 +45,7 @@ interface SkuMergedRow {
   item_description: string
   combined_value: number
   uom: string
+  prod_date?: string // Added for detailed view
 }
 
 export default function SkuFlatReportWithUomPage() {
@@ -53,6 +54,7 @@ export default function SkuFlatReportWithUomPage() {
     day: true,
     night: true,
   })
+  const [isDetailed, setIsDetailed] = React.useState<boolean>(false) // Detailed Mode State
 
   const [startDate, setStartDate] = React.useState<Date | undefined>(
     startOfDay(new Date())
@@ -73,6 +75,7 @@ export default function SkuFlatReportWithUomPage() {
     const worksheetData = mergedRows.map((row) => ({
       "SKU Code": row.item_code,
       "Item Description": row.item_description,
+      ...(isDetailed ? { "Production Date": row.prod_date || "N/A" } : {}),
       "Total Extracted Value": row.combined_value,
       "Unit of Measure (UOM)": row.uom.toUpperCase(),
     }))
@@ -81,11 +84,15 @@ export default function SkuFlatReportWithUomPage() {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, "Yield Profile")
 
-    worksheet["!cols"] = [{ wch: 18 }, { wch: 45 }, { wch: 22 }, { wch: 22 }]
+    // Dynamic columns configurations based on mode
+    worksheet["!cols"] = isDetailed
+      ? [{ wch: 18 }, { wch: 45 }, { wch: 18 }, { wch: 22 }, { wch: 22 }]
+      : [{ wch: 18 }, { wch: 45 }, { wch: 22 }, { wch: 22 }]
 
     const startString = startDate ? format(startDate, "yyyyMMdd") : "start"
     const endString = endDate ? format(endDate, "yyyyMMdd") : "end"
-    const fileName = `${department}_flat_report_${startString}_to_${endString}.xlsx`
+    const modeString = isDetailed ? "detailed" : "flat"
+    const fileName = `${department}_${modeString}_report_${startString}_to_${endString}.xlsx`
 
     XLSX.writeFile(workbook, fileName)
   }
@@ -121,17 +128,31 @@ export default function SkuFlatReportWithUomPage() {
       // Shared item specs lookup dictionary across all lines
       const globalDescMap = new Map<string, { desc: string; uom: string }>()
 
-      const getOrCreateRow = (code: string): SkuMergedRow => {
-        if (!localAggregationMap.has(code)) {
+      // Extract raw date out of a prod_id string (e.g., "PROD-2026-03-24-day" -> "2026-03-24")
+      const extractDateFromProdId = (prodId: string): string => {
+        const parts = prodId.split("-")
+        if (parts.length >= 4) {
+          return `${parts[1]}-${parts[2]}-${parts[3]}`
+        }
+        return "Unknown"
+      }
+
+      const getOrCreateRow = (code: string, prodId?: string): SkuMergedRow => {
+        const prodDate = prodId ? extractDateFromProdId(prodId) : ""
+        // Map unique mapping keys based on standard vs detailed structure criteria
+        const mapKey = isDetailed ? `${code}_${prodDate}` : code
+
+        if (!localAggregationMap.has(mapKey)) {
           const skuMeta = globalDescMap.get(code)
-          localAggregationMap.set(code, {
+          localAggregationMap.set(mapKey, {
             item_code: code,
             item_description: skuMeta?.desc || "Missing item specs",
             combined_value: 0,
             uom: skuMeta?.uom || "units",
+            ...(isDetailed ? { prod_date: prodDate } : {}),
           })
         }
-        return localAggregationMap.get(code)!
+        return localAggregationMap.get(mapKey)!
       }
 
       const isAll = department === "all"
@@ -175,19 +196,19 @@ export default function SkuFlatReportWithUomPage() {
         isAll || department === "bihon"
           ? supabase
               .from("bh_cooking")
-              .select("item_code, weight")
+              .select("prod_id, item_code, weight")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "bihon"
           ? supabase
               .from("bh_packing")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "bihon"
           ? supabase
               .from("bh_fg")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "bihon"
@@ -200,43 +221,43 @@ export default function SkuFlatReportWithUomPage() {
         isAll || department === "snackfood"
           ? supabase
               .from("sf_blending")
-              .select("item_code, usage")
+              .select("prod_id, item_code, usage")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "snackfood"
           ? supabase
               .from("sf_premix")
-              .select("item_code, usage")
+              .select("prod_id, item_code, usage")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "snackfood"
           ? supabase
               .from("sf_mix")
-              .select("item_code, weight")
+              .select("prod_id, item_code, weight")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "snackfood"
           ? supabase
               .from("sf_frying")
-              .select("item_code, weight")
+              .select("prod_id, item_code, weight")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "snackfood"
           ? supabase
               .from("sf_flavoring")
-              .select("item_code, weight")
+              .select("prod_id, item_code, weight")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "snackfood"
           ? supabase
               .from("sf_piece")
-              .select("item_code, pcs")
+              .select("prod_id, item_code, pcs")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "snackfood"
           ? supabase
               .from("sf_fg")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "snackfood"
@@ -247,25 +268,25 @@ export default function SkuFlatReportWithUomPage() {
         isAll || department === "catmon"
           ? supabase
               .from("catmon_mixing")
-              .select("item_code, weight")
+              .select("prod_id, item_code, weight")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "catmon"
           ? supabase
               .from("catmon_frying_drying")
-              .select("item_code, weight")
+              .select("prod_id, item_code, weight")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "catmon"
           ? supabase
               .from("catmon_packing")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "catmon"
           ? supabase
               .from("catmon_fg")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "catmon"
@@ -278,19 +299,19 @@ export default function SkuFlatReportWithUomPage() {
         isAll || department === "kf_sotanghon"
           ? supabase
               .from("kf_packing")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "kf_sotanghon"
           ? supabase
               .from("kf_fg")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "kf_sotanghon"
           ? supabase
               .from("kf_seasoning")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department.startsWith("kf_")
@@ -301,13 +322,13 @@ export default function SkuFlatReportWithUomPage() {
         isAll || department === "kf_hobe"
           ? supabase
               .from("kf_he_packing")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "kf_hobe"
           ? supabase
               .from("kf_he_fg")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
 
@@ -315,13 +336,13 @@ export default function SkuFlatReportWithUomPage() {
         isAll || department === "kf_canton"
           ? supabase
               .from("kf_canton_packing")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "kf_canton"
           ? supabase
               .from("kf_canton_fg")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
 
@@ -329,13 +350,13 @@ export default function SkuFlatReportWithUomPage() {
         isAll || department === "kf_sf"
           ? supabase
               .from("kf_sf_packing")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
         isAll || department === "kf_sf"
           ? supabase
               .from("kf_sf_fg")
-              .select("item_code, qty")
+              .select("prod_id, item_code, qty")
               .in("prod_id", generatedProdIds)
           : Promise.resolve({ data: [] }),
       ])
@@ -366,100 +387,148 @@ export default function SkuFlatReportWithUomPage() {
         })
       )
 
-      // Ensure SKU structures exist inside memory maps
-      bhSku.data?.forEach((s) => getOrCreateRow(s.item_code))
-      sfSku.data?.forEach((s) => getOrCreateRow(s.item_code))
-      cmSku.data?.forEach((s) => getOrCreateRow(s.item_code))
-      kfSku.data?.forEach((s) => getOrCreateRow(s.item_code))
-
       // --- Line Aggregation Implementations ---
       // Bihon
       bhCooking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.weight || 0
+        )
       })
       bhPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
       bhFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
 
       // Snackfood
       sfBlend.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.usage || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.usage || 0
+        )
       })
       sfPremix.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.usage || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.usage || 0
+        )
       })
       sfMix.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.weight || 0
+        )
       })
       sfFrying.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.weight || 0
+        )
       })
       sfFlavor.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.weight || 0
+        )
       })
       sfPiece.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.pcs || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.pcs || 0
+        )
       })
       sfFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
 
       // Catmon
       cmMix.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.weight || 0
+        )
       })
       cmDry.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.weight || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.weight || 0
+        )
       })
       cmPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
       cmFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
 
       // Kingsforth Sotanghon
       kfPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
       kfFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
       kfSeasoning.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
 
       // Kingsforth Hobe Express
       kfHePacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
       kfHeFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
 
       // Kingsforth Canton
       kfCantonPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
       kfCantonFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
 
       // Kingsforth Snackfood
       kfSfPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
       kfSfFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code).combined_value += Number(r.qty || 0)
+        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
+          r.qty || 0
+        )
       })
 
-      // Filter down view to exclude zero activity lines
-      const resultingRows = Array.from(localAggregationMap.values()).filter(
-        (row) => row.combined_value > 0
-      )
+      // Filter down view to exclude zero activity lines and sort chronologically/alphabetically
+      const resultingRows = Array.from(localAggregationMap.values())
+        .filter((row) => row.combined_value > 0)
+        .sort((a, b) => {
+          if (isDetailed && a.prod_date && b.prod_date) {
+            return (
+              a.prod_date.localeCompare(b.prod_date) ||
+              a.item_code.localeCompare(b.item_code)
+            )
+          }
+          return a.item_code.localeCompare(b.item_code)
+        })
 
       setMergedRows(resultingRows)
     } catch (error: any) {
@@ -582,33 +651,43 @@ export default function SkuFlatReportWithUomPage() {
 
             <div className="space-y-1.5">
               <Label className="text-xs font-bold text-slate-500 uppercase">
-                Active Shifts
+                Active Shifts & Mode
               </Label>
-              <div className="flex h-9 items-center gap-4">
-                <label className="flex cursor-pointer items-center space-x-2 text-xs font-medium">
+              <div className="flex flex-col gap-2 pt-1">
+                <div className="flex items-center gap-4">
+                  <label className="flex cursor-pointer items-center space-x-2 text-xs font-medium">
+                    <Checkbox
+                      checked={shifts.day}
+                      onCheckedChange={(c) =>
+                        setShifts((p) => ({ ...p, day: !!c }))
+                      }
+                    />
+                    <span>Day</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center space-x-2 text-xs font-medium">
+                    <Checkbox
+                      checked={shifts.night}
+                      onCheckedChange={(c) =>
+                        setShifts((p) => ({ ...p, night: !!c }))
+                      }
+                    />
+                    <span>Night</span>
+                  </label>
+                </div>
+                {/* Detailed Mode Checkbox Row */}
+                <label className="flex cursor-pointer items-center space-x-2 border-t border-slate-100 pt-2 text-xs font-bold tracking-tight text-blue-600 uppercase">
                   <Checkbox
-                    checked={shifts.day}
-                    onCheckedChange={(c) =>
-                      setShifts((p) => ({ ...p, day: !!c }))
-                    }
+                    checked={isDetailed}
+                    onCheckedChange={(c) => setIsDetailed(!!c)}
                   />
-                  <span>Day</span>
-                </label>
-                <label className="flex cursor-pointer items-center space-x-2 text-xs font-medium">
-                  <Checkbox
-                    checked={shifts.night}
-                    onCheckedChange={(c) =>
-                      setShifts((p) => ({ ...p, night: !!c }))
-                    }
-                  />
-                  <span>Night</span>
+                  <span>Detailed Mode</span>
                 </label>
               </div>
             </div>
 
             <Button
               type="submit"
-              className="h-9 bg-blue-600 text-xs font-medium text-white hover:bg-blue-700"
+              className="h-9 bg-blue-600 text-xs font-medium text-white hover:bg-blue-700 sm:mt-5"
               disabled={
                 isLoading ||
                 !department ||
@@ -653,39 +732,54 @@ export default function SkuFlatReportWithUomPage() {
               Yield Profile:{" "}
               {department === "all"
                 ? "All Divisions Consolidation"
-                : department.replace("kf_", "Kingsforth ")}
+                : department.replace("kf_", "Kingsforth ")}{" "}
+              {isDetailed ? "(Detailed)" : ""}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
               <TableHeader className="bg-slate-100/70">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[180px] text-xs font-bold text-slate-700">
+                  <TableHead className="w-[140px] text-xs font-bold text-slate-700">
                     SKU Code
                   </TableHead>
                   <TableHead className="text-xs font-bold text-slate-700">
                     Item Description
                   </TableHead>
-                  <TableHead className="w-[180px] text-right text-xs font-bold text-slate-700">
+                  {isDetailed && (
+                    <TableHead className="w-[130px] text-xs font-bold text-slate-700">
+                      Prod Date
+                    </TableHead>
+                  )}
+                  <TableHead className="w-[160px] text-right text-xs font-bold text-slate-700">
                     Total Extracted Value
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {mergedRows.map((row) => (
+                {mergedRows.map((row, index) => (
                   <TableRow
-                    key={row.item_code}
+                    key={
+                      isDetailed
+                        ? `${row.item_code}_${row.prod_date}_${index}`
+                        : row.item_code
+                    }
                     className="transition-colors hover:bg-slate-50/60"
                   >
                     <TableCell className="font-mono text-xs font-bold text-slate-900">
                       {row.item_code}
                     </TableCell>
                     <TableCell
-                      className="max-w-md truncate text-xs text-slate-600"
+                      className="max-w-xs truncate text-xs text-slate-600"
                       title={row.item_description}
                     >
                       {row.item_description}
                     </TableCell>
+                    {isDetailed && (
+                      <TableCell className="font-mono text-xs text-slate-600">
+                        {row.prod_date}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right font-mono text-xs font-bold whitespace-nowrap text-blue-600">
                       {row.combined_value.toLocaleString()}{" "}
                       <span className="ml-1 text-[10px] font-medium tracking-wide text-slate-400 uppercase">
