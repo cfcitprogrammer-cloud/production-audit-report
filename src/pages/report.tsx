@@ -25,6 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
+import { Input } from "@/components/ui/input"
 import {
   Popover,
   PopoverContent,
@@ -45,7 +46,7 @@ interface SkuMergedRow {
   item_description: string
   combined_value: number
   uom: string
-  prod_date?: string // Added for detailed view
+  prod_date?: string
 }
 
 export default function SkuFlatReportWithUomPage() {
@@ -54,7 +55,7 @@ export default function SkuFlatReportWithUomPage() {
     day: true,
     night: true,
   })
-  const [isDetailed, setIsDetailed] = React.useState<boolean>(false) // Detailed Mode State
+  const [isDetailed, setIsDetailed] = React.useState<boolean>(false)
 
   const [startDate, setStartDate] = React.useState<Date | undefined>(
     startOfDay(new Date())
@@ -68,11 +69,37 @@ export default function SkuFlatReportWithUomPage() {
     null
   )
 
+  // --- Search & Debounce States ---
+  const [searchQuery, setSearchQuery] = React.useState<string>("")
+  const [debouncedSearchQuery, setDebouncedSearchQuery] =
+    React.useState<string>("")
+
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery)
+    }, 300)
+
+    return () => {
+      clearTimeout(handler)
+    }
+  }, [searchQuery])
+
+  // Computed array mapping for rendering filtered results case-insensitively
+  const filteredRows = React.useMemo(() => {
+    if (!mergedRows) return []
+    if (!debouncedSearchQuery.trim()) return mergedRows
+
+    const targetQuery = debouncedSearchQuery.toLowerCase()
+    return mergedRows.filter((row) =>
+      row.item_code.toLowerCase().includes(targetQuery)
+    )
+  }, [mergedRows, debouncedSearchQuery])
+
   // --- XLSX Export Handler ---
   const handleExportToExcel = () => {
-    if (!mergedRows || mergedRows.length === 0) return
+    if (!filteredRows || filteredRows.length === 0) return
 
-    const worksheetData = mergedRows.map((row) => ({
+    const worksheetData = filteredRows.map((row) => ({
       "SKU Code": row.item_code,
       "Item Description": row.item_description,
       ...(isDetailed ? { "Production Date": row.prod_date || "N/A" } : {}),
@@ -84,7 +111,6 @@ export default function SkuFlatReportWithUomPage() {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, "Yield Profile")
 
-    // Dynamic columns configurations based on mode
     worksheet["!cols"] = isDetailed
       ? [{ wch: 18 }, { wch: 45 }, { wch: 18 }, { wch: 22 }, { wch: 22 }]
       : [{ wch: 18 }, { wch: 45 }, { wch: 22 }, { wch: 22 }]
@@ -124,11 +150,8 @@ export default function SkuFlatReportWithUomPage() {
 
     try {
       const localAggregationMap = new Map<string, SkuMergedRow>()
-
-      // Shared item specs lookup dictionary across all lines
       const globalDescMap = new Map<string, { desc: string; uom: string }>()
 
-      // Extract raw date out of a prod_id string (e.g., "PROD-2026-03-24-day" -> "2026-03-24")
       const extractDateFromProdId = (prodId: string): string => {
         const parts = prodId.split("-")
         if (parts.length >= 4) {
@@ -139,7 +162,6 @@ export default function SkuFlatReportWithUomPage() {
 
       const getOrCreateRow = (code: string, prodId?: string): SkuMergedRow => {
         const prodDate = prodId ? extractDateFromProdId(prodId) : ""
-        // Map unique mapping keys based on standard vs detailed structure criteria
         const mapKey = isDetailed ? `${code}_${prodDate}` : code
 
         if (!localAggregationMap.has(mapKey)) {
@@ -157,14 +179,11 @@ export default function SkuFlatReportWithUomPage() {
 
       const isAll = department === "all"
 
-      // Execute queries conditioned on chosen division parameters
       const [
-        // 1. Bihon Line Queries
         bhCooking,
         bhPacking,
         bhFg,
         bhSku,
-        // 2. Snackfood Line Queries
         sfBlend,
         sfPremix,
         sfMix,
@@ -173,18 +192,15 @@ export default function SkuFlatReportWithUomPage() {
         sfPiece,
         sfFg,
         sfSku,
-        // 3. Catmon Line Queries
         cmMix,
         cmDry,
         cmPacking,
         cmFg,
         cmSku,
-        // 4. Kingsforth Sotanghon / Shared Core Queries
         kfPacking,
         kfFg,
         kfSeasoning,
         kfSku,
-        // 5. Kingsforth Specific Subdivision Queries
         kfHePacking,
         kfHeFg,
         kfCantonPacking,
@@ -295,7 +311,7 @@ export default function SkuFlatReportWithUomPage() {
               .select("item_code, item_description, uom")
           : Promise.resolve({ data: [] }),
 
-        // --- Kingsforth Sotanghon / Shared Core blocks ---
+        // --- Kingsforth Sotanghon Blocks ---
         isAll || department === "kf_sotanghon"
           ? supabase
               .from("kf_packing")
@@ -387,8 +403,7 @@ export default function SkuFlatReportWithUomPage() {
         })
       )
 
-      // --- Line Aggregation Implementations ---
-      // Bihon
+      // --- Aggregations ---
       bhCooking.data?.forEach((r) => {
         getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
           r.weight || 0
@@ -405,7 +420,6 @@ export default function SkuFlatReportWithUomPage() {
         )
       })
 
-      // Snackfood
       sfBlend.data?.forEach((r) => {
         getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
           r.usage || 0
@@ -442,7 +456,6 @@ export default function SkuFlatReportWithUomPage() {
         )
       })
 
-      // Catmon
       cmMix.data?.forEach((r) => {
         getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
           r.weight || 0
@@ -464,7 +477,6 @@ export default function SkuFlatReportWithUomPage() {
         )
       })
 
-      // Kingsforth Sotanghon
       kfPacking.data?.forEach((r) => {
         getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
           r.qty || 0
@@ -481,7 +493,6 @@ export default function SkuFlatReportWithUomPage() {
         )
       })
 
-      // Kingsforth Hobe Express
       kfHePacking.data?.forEach((r) => {
         getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
           r.qty || 0
@@ -493,7 +504,6 @@ export default function SkuFlatReportWithUomPage() {
         )
       })
 
-      // Kingsforth Canton
       kfCantonPacking.data?.forEach((r) => {
         getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
           r.qty || 0
@@ -505,7 +515,6 @@ export default function SkuFlatReportWithUomPage() {
         )
       })
 
-      // Kingsforth Snackfood
       kfSfPacking.data?.forEach((r) => {
         getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
           r.qty || 0
@@ -517,7 +526,6 @@ export default function SkuFlatReportWithUomPage() {
         )
       })
 
-      // Filter down view to exclude zero activity lines and sort chronologically/alphabetically
       const resultingRows = Array.from(localAggregationMap.values())
         .filter((row) => row.combined_value > 0)
         .sort((a, b) => {
@@ -540,7 +548,7 @@ export default function SkuFlatReportWithUomPage() {
   }
 
   return (
-    <div className="container mx-auto max-w-4xl space-y-6 p-6">
+    <div className="container mx-auto max-w-5xl space-y-6 p-6">
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
@@ -552,7 +560,7 @@ export default function SkuFlatReportWithUomPage() {
           </p>
         </div>
 
-        {mergedRows && mergedRows.length > 0 && (
+        {filteredRows && filteredRows.length > 0 && (
           <Button
             onClick={handleExportToExcel}
             variant="outline"
@@ -568,8 +576,9 @@ export default function SkuFlatReportWithUomPage() {
         <CardContent className="p-4">
           <form
             onSubmit={handleGenerateReport}
-            className="grid grid-cols-1 items-start gap-4 sm:grid-cols-4"
+            className="grid grid-cols-1 items-start gap-4 sm:grid-cols-5"
           >
+            {/* 1. Department Line Selector */}
             <div className="space-y-1.5">
               <Label
                 htmlFor="department"
@@ -578,8 +587,8 @@ export default function SkuFlatReportWithUomPage() {
                 Department Line
               </Label>
               <Select value={department} onValueChange={setDepartment}>
-                <SelectTrigger id="department" className="h-9 bg-white">
-                  <SelectValue placeholder="Select Line Division" />
+                <SelectTrigger id="department" className="h-9 bg-white text-xs">
+                  <SelectValue placeholder="Select Division" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Departments</SelectItem>
@@ -594,68 +603,67 @@ export default function SkuFlatReportWithUomPage() {
               </Select>
             </div>
 
+            {/* 2. Target Operational Date Block */}
             <div className="space-y-1.5">
               <Label className="text-xs font-bold text-slate-500 uppercase">
-                Operational Target Scope
+                Date Range
               </Label>
-              <div className="flex flex-col items-stretch gap-1.5">
-                <div>
-                  <span className="block text-xs text-slate-400">From</span>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className="h-9 w-full justify-start text-xs font-normal"
-                      >
-                        <CalendarIcon className="mr-1.5 h-3.5 w-3.5 text-slate-400" />
-                        <span className="truncate">
-                          {startDate ? format(startDate, "MM/dd/yy") : "Start"}
-                        </span>
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={startDate}
-                        onSelect={setStartDate}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div>
-                  <span className="block text-xs text-slate-400">To</span>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className="h-9 w-full justify-start text-xs font-normal"
-                      >
-                        <CalendarIcon className="mr-1.5 h-3.5 w-3.5 text-slate-400" />
-                        <span className="truncate">
-                          {endDate ? format(endDate, "MM/dd/yy") : "End"}
-                        </span>
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={endDate}
-                        onSelect={setEndDate}
-                        disabled={(date) => !!startDate && date < startDate}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
+              <div className="flex flex-col items-center gap-1.5">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="h-9 w-full justify-start px-2 text-left text-xs font-normal"
+                    >
+                      <CalendarIcon className="structural-shrink-0 mr-1 h-3.5 w-3.5 text-slate-400" />
+                      <span className="truncate">
+                        {startDate ? format(startDate, "MM/dd") : "Start"}
+                      </span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={startDate}
+                      onSelect={setStartDate}
+                    />
+                  </PopoverContent>
+                </Popover>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">
+                  To
+                </span>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="h-9 w-full justify-start px-2 text-left text-xs font-normal"
+                    >
+                      <CalendarIcon className="structural-shrink-0 mr-1 h-3.5 w-3.5 text-slate-400" />
+                      <span className="truncate">
+                        {endDate ? format(endDate, "MM/dd") : "End"}
+                      </span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={endDate}
+                      onSelect={setEndDate}
+                      disabled={(date) => !!startDate && date < startDate}
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
 
+            {/* 3. Shifts & View Mode Setup */}
             <div className="space-y-1.5">
               <Label className="text-xs font-bold text-slate-500 uppercase">
-                Active Shifts & Mode
+                Shifts & Mode
               </Label>
-              <div className="flex flex-col gap-2 pt-1">
-                <div className="flex items-center gap-4">
-                  <label className="flex cursor-pointer items-center space-x-2 text-xs font-medium">
+              <div className="flex flex-col gap-1 pt-0.5">
+                <div className="flex items-center gap-3">
+                  <label className="flex cursor-pointer items-center space-x-1.5 text-xs font-medium">
                     <Checkbox
                       checked={shifts.day}
                       onCheckedChange={(c) =>
@@ -664,7 +672,7 @@ export default function SkuFlatReportWithUomPage() {
                     />
                     <span>Day</span>
                   </label>
-                  <label className="flex cursor-pointer items-center space-x-2 text-xs font-medium">
+                  <label className="flex cursor-pointer items-center space-x-1.5 text-xs font-medium">
                     <Checkbox
                       checked={shifts.night}
                       onCheckedChange={(c) =>
@@ -674,8 +682,7 @@ export default function SkuFlatReportWithUomPage() {
                     <span>Night</span>
                   </label>
                 </div>
-                {/* Detailed Mode Checkbox Row */}
-                <label className="flex cursor-pointer items-center space-x-2 border-t border-slate-100 pt-2 text-xs font-bold tracking-tight text-blue-600 uppercase">
+                <label className="flex cursor-pointer items-center space-x-1.5 text-[10px] font-bold tracking-tight text-blue-600 uppercase">
                   <Checkbox
                     checked={isDetailed}
                     onCheckedChange={(c) => setIsDetailed(!!c)}
@@ -685,9 +692,31 @@ export default function SkuFlatReportWithUomPage() {
               </div>
             </div>
 
+            {/* 4. SKU Live Text Filter Input (Grouped Before Search Action Button) */}
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="sku-filter"
+                className="text-xs font-bold text-slate-500 uppercase"
+              >
+                SKU Filter
+              </Label>
+              <div className="relative">
+                <Search className="absolute top-2.5 left-2.5 h-3.5 w-3.5 text-slate-400" />
+                <Input
+                  id="sku-filter"
+                  type="text"
+                  placeholder="Type code..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-9 bg-white pl-8 text-xs shadow-xs focus-visible:ring-1"
+                />
+              </div>
+            </div>
+
+            {/* 5. Compile/Generate Search Form Button */}
             <Button
               type="submit"
-              className="h-9 bg-blue-600 text-xs font-medium text-white hover:bg-blue-700 sm:mt-5"
+              className="h-9 bg-blue-600 text-xs font-medium text-white hover:bg-blue-700"
               disabled={
                 isLoading ||
                 !department ||
@@ -711,7 +740,7 @@ export default function SkuFlatReportWithUomPage() {
         </CardContent>
       </Card>
 
-      {/* RENDER FLAT INTERFACE VIEW */}
+      {/* RENDER REPORT RESULTS CONTAINER */}
       {!mergedRows ? (
         <div className="rounded-xl border border-dashed bg-slate-50/50 p-12 text-center text-slate-400">
           <FileSpreadsheet className="mx-auto mb-2 h-8 w-8 text-slate-300" />
@@ -723,6 +752,13 @@ export default function SkuFlatReportWithUomPage() {
         <div className="rounded-xl border bg-white p-12 text-center text-slate-500">
           <p className="text-xs font-semibold">
             No data points logged inside requested search criteria.
+          </p>
+        </div>
+      ) : filteredRows.length === 0 ? (
+        <div className="rounded-xl border bg-slate-50/40 p-12 text-center text-slate-400">
+          <p className="text-xs font-medium">
+            No active metrics match the SKU filter criteria "
+            {debouncedSearchQuery}".
           </p>
         </div>
       ) : (
@@ -757,12 +793,12 @@ export default function SkuFlatReportWithUomPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {mergedRows.map((row, index) => (
+                {filteredRows.map((row, index) => (
                   <TableRow
                     key={
                       isDetailed
                         ? `${row.item_code}_${row.prod_date}_${index}`
-                        : row.item_code
+                        : `${row.item_code}_${index}`
                     }
                     className="transition-colors hover:bg-slate-50/60"
                   >
