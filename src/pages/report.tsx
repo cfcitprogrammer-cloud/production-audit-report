@@ -8,6 +8,7 @@ import {
   Download,
   Loader2,
   Search,
+  SlidersHorizontal,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import * as XLSX from "xlsx"
@@ -47,6 +48,7 @@ interface SkuMergedRow {
   combined_value: number
   uom: string
   prod_date?: string
+  origin: string // Track exact component layer explicitly per row
 }
 
 export default function SkuFlatReportWithUomPage() {
@@ -69,10 +71,12 @@ export default function SkuFlatReportWithUomPage() {
     null
   )
 
-  // --- Search & Debounce States ---
+  // --- Filter States ---
   const [searchQuery, setSearchQuery] = React.useState<string>("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] =
     React.useState<string>("")
+  const [selectedOriginFilter, setSelectedOriginFilter] =
+    React.useState<string>("all")
 
   React.useEffect(() => {
     const handler = setTimeout(() => {
@@ -84,16 +88,33 @@ export default function SkuFlatReportWithUomPage() {
     }
   }, [searchQuery])
 
-  // Computed array mapping for rendering filtered results case-insensitively
+  // Reset origin filter whenever department changes
+  React.useEffect(() => {
+    setSelectedOriginFilter("all")
+  }, [department])
+
+  // Extracted unique operational blocks lists for filter dropdown
+  const availableOrigins = React.useMemo(() => {
+    if (!mergedRows) return []
+    const originsSet = new Set<string>()
+    mergedRows.forEach((row) => originsSet.add(row.origin))
+    return Array.from(originsSet).sort()
+  }, [mergedRows])
+
+  // --- Computed Filtering Rules ---
   const filteredRows = React.useMemo(() => {
     if (!mergedRows) return []
-    if (!debouncedSearchQuery.trim()) return mergedRows
 
-    const targetQuery = debouncedSearchQuery.toLowerCase()
-    return mergedRows.filter((row) =>
-      row.item_code.toLowerCase().includes(targetQuery)
-    )
-  }, [mergedRows, debouncedSearchQuery])
+    return mergedRows.filter((row) => {
+      const targetQuery = debouncedSearchQuery.trim().toLowerCase()
+      const matchesSearch =
+        !targetQuery || row.item_code.toLowerCase().includes(targetQuery)
+      const matchesOrigin =
+        selectedOriginFilter === "all" || row.origin === selectedOriginFilter
+
+      return matchesSearch && matchesOrigin
+    })
+  }, [mergedRows, debouncedSearchQuery, selectedOriginFilter])
 
   // --- XLSX Export Handler ---
   const handleExportToExcel = () => {
@@ -103,7 +124,8 @@ export default function SkuFlatReportWithUomPage() {
       "SKU Code": row.item_code,
       "Item Description": row.item_description,
       ...(isDetailed ? { "Production Date": row.prod_date || "N/A" } : {}),
-      "Total Extracted Value": row.combined_value,
+      "Origin Stage Block": row.origin,
+      "Total Value": row.combined_value,
       "Unit of Measure (UOM)": row.uom.toUpperCase(),
     }))
 
@@ -112,8 +134,15 @@ export default function SkuFlatReportWithUomPage() {
     XLSX.utils.book_append_sheet(workbook, worksheet, "Yield Profile")
 
     worksheet["!cols"] = isDetailed
-      ? [{ wch: 18 }, { wch: 45 }, { wch: 18 }, { wch: 22 }, { wch: 22 }]
-      : [{ wch: 18 }, { wch: 45 }, { wch: 22 }, { wch: 22 }]
+      ? [
+          { wch: 18 },
+          { wch: 45 },
+          { wch: 18 },
+          { wch: 30 },
+          { wch: 22 },
+          { wch: 22 },
+        ]
+      : [{ wch: 18 }, { wch: 45 }, { wch: 30 }, { wch: 22 }, { wch: 22 }]
 
     const startString = startDate ? format(startDate, "yyyyMMdd") : "start"
     const endString = endDate ? format(endDate, "yyyyMMdd") : "end"
@@ -160,9 +189,16 @@ export default function SkuFlatReportWithUomPage() {
         return "Unknown"
       }
 
-      const getOrCreateRow = (code: string, prodId?: string): SkuMergedRow => {
+      // Unique identifier combines code + origin name (+ optionally production date)
+      const getOrCreateRow = (
+        code: string,
+        prodId: string,
+        componentBlock: string
+      ): SkuMergedRow => {
         const prodDate = prodId ? extractDateFromProdId(prodId) : ""
-        const mapKey = isDetailed ? `${code}_${prodDate}` : code
+        const mapKey = isDetailed
+          ? `${code}_${componentBlock}_${prodDate}`
+          : `${code}_${componentBlock}`
 
         if (!localAggregationMap.has(mapKey)) {
           const skuMeta = globalDescMap.get(code)
@@ -171,9 +207,11 @@ export default function SkuFlatReportWithUomPage() {
             item_description: skuMeta?.desc || "Missing item specs",
             combined_value: 0,
             uom: skuMeta?.uom || "units",
+            origin: componentBlock,
             ...(isDetailed ? { prod_date: prodDate } : {}),
           })
         }
+
         return localAggregationMap.get(mapKey)!
       }
 
@@ -403,127 +441,173 @@ export default function SkuFlatReportWithUomPage() {
         })
       )
 
-      // --- Aggregations ---
+      // --- Aggregations mapped to explicit split rows ---
       bhCooking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.weight || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Bihon - Cooking"
+        ).combined_value += Number(r.weight || 0)
       })
       bhPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Bihon - Packing"
+        ).combined_value += Number(r.qty || 0)
       })
       bhFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Bihon - Finished Goods"
+        ).combined_value += Number(r.qty || 0)
       })
 
       sfBlend.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.usage || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Snackfood - Blending"
+        ).combined_value += Number(r.usage || 0)
       })
       sfPremix.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.usage || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Snackfood - Premix"
+        ).combined_value += Number(r.usage || 0)
       })
       sfMix.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.weight || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Snackfood - Mixing"
+        ).combined_value += Number(r.weight || 0)
       })
       sfFrying.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.weight || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Snackfood - Frying"
+        ).combined_value += Number(r.weight || 0)
       })
       sfFlavor.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.weight || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Snackfood - Flavoring"
+        ).combined_value += Number(r.weight || 0)
       })
       sfPiece.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.pcs || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Snackfood - Piece counting"
+        ).combined_value += Number(r.pcs || 0)
       })
       sfFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Snackfood - Finished Goods"
+        ).combined_value += Number(r.qty || 0)
       })
 
       cmMix.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.weight || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Catmon - Mixing"
+        ).combined_value += Number(r.weight || 0)
       })
       cmDry.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.weight || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Catmon - Frying/Drying"
+        ).combined_value += Number(r.weight || 0)
       })
       cmPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Catmon - Packing"
+        ).combined_value += Number(r.qty || 0)
       })
       cmFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "Catmon - Finished Goods"
+        ).combined_value += Number(r.qty || 0)
       })
 
       kfPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Sotanghon - Packing"
+        ).combined_value += Number(r.qty || 0)
       })
       kfFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Sotanghon - Finished Goods"
+        ).combined_value += Number(r.qty || 0)
       })
       kfSeasoning.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Sotanghon - Seasoning"
+        ).combined_value += Number(r.qty || 0)
       })
 
       kfHePacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Hobe Express - Packing"
+        ).combined_value += Number(r.qty || 0)
       })
       kfHeFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Hobe Express - Finished Goods"
+        ).combined_value += Number(r.qty || 0)
       })
 
       kfCantonPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Canton - Packing"
+        ).combined_value += Number(r.qty || 0)
       })
       kfCantonFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Canton - Finished Goods"
+        ).combined_value += Number(r.qty || 0)
       })
 
       kfSfPacking.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Snackfood - Packing"
+        ).combined_value += Number(r.qty || 0)
       })
       kfSfFg.data?.forEach((r) => {
-        getOrCreateRow(r.item_code, r.prod_id).combined_value += Number(
-          r.qty || 0
-        )
+        getOrCreateRow(
+          r.item_code,
+          r.prod_id,
+          "KF Snackfood - Finished Goods"
+        ).combined_value += Number(r.qty || 0)
       })
 
       const resultingRows = Array.from(localAggregationMap.values())
@@ -532,10 +616,14 @@ export default function SkuFlatReportWithUomPage() {
           if (isDetailed && a.prod_date && b.prod_date) {
             return (
               a.prod_date.localeCompare(b.prod_date) ||
-              a.item_code.localeCompare(b.item_code)
+              a.item_code.localeCompare(b.item_code) ||
+              a.origin.localeCompare(b.origin)
             )
           }
-          return a.item_code.localeCompare(b.item_code)
+          return (
+            a.item_code.localeCompare(b.item_code) ||
+            a.origin.localeCompare(b.origin)
+          )
         })
 
       setMergedRows(resultingRows)
@@ -555,8 +643,8 @@ export default function SkuFlatReportWithUomPage() {
             Production Audit Report
           </h1>
           <p className="text-xs text-slate-500">
-            Horizontally collapsed yield profiles with database integrated
-            units.
+            Segmented tracking reports showing standalone operational stage
+            levels.
           </p>
         </div>
 
@@ -603,7 +691,7 @@ export default function SkuFlatReportWithUomPage() {
               </Select>
             </div>
 
-            {/* 2. Target Operational Date Block */}
+            {/* 2. Date Block */}
             <div className="space-y-1.5">
               <Label className="text-xs font-bold text-slate-500 uppercase">
                 Date Range
@@ -615,7 +703,7 @@ export default function SkuFlatReportWithUomPage() {
                       variant="outline"
                       className="h-9 w-full justify-start px-2 text-left text-xs font-normal"
                     >
-                      <CalendarIcon className="structural-shrink-0 mr-1 h-3.5 w-3.5 text-slate-400" />
+                      <CalendarIcon className="mr-1 h-3.5 w-3.5 text-slate-400" />
                       <span className="truncate">
                         {startDate ? format(startDate, "MM/dd") : "Start"}
                       </span>
@@ -638,7 +726,7 @@ export default function SkuFlatReportWithUomPage() {
                       variant="outline"
                       className="h-9 w-full justify-start px-2 text-left text-xs font-normal"
                     >
-                      <CalendarIcon className="structural-shrink-0 mr-1 h-3.5 w-3.5 text-slate-400" />
+                      <CalendarIcon className="mr-1 h-3.5 w-3.5 text-slate-400" />
                       <span className="truncate">
                         {endDate ? format(endDate, "MM/dd") : "End"}
                       </span>
@@ -656,7 +744,7 @@ export default function SkuFlatReportWithUomPage() {
               </div>
             </div>
 
-            {/* 3. Shifts & View Mode Setup */}
+            {/* 3. Shifts */}
             <div className="space-y-1.5">
               <Label className="text-xs font-bold text-slate-500 uppercase">
                 Shifts & Mode
@@ -692,7 +780,7 @@ export default function SkuFlatReportWithUomPage() {
               </div>
             </div>
 
-            {/* 4. SKU Live Text Filter Input (Grouped Before Search Action Button) */}
+            {/* 4. SKU Filter */}
             <div className="space-y-1.5">
               <Label
                 htmlFor="sku-filter"
@@ -713,10 +801,10 @@ export default function SkuFlatReportWithUomPage() {
               </div>
             </div>
 
-            {/* 5. Compile/Generate Search Form Button */}
+            {/* 5. Submit Button */}
             <Button
               type="submit"
-              className="h-9 bg-blue-600 text-xs font-medium text-white hover:bg-blue-700"
+              className="h-9 w-full bg-blue-600 text-xs font-medium text-white hover:bg-blue-700"
               disabled={
                 isLoading ||
                 !department ||
@@ -740,7 +828,44 @@ export default function SkuFlatReportWithUomPage() {
         </CardContent>
       </Card>
 
-      {/* RENDER REPORT RESULTS CONTAINER */}
+      {/* FILTER DROPDOWN BAR */}
+      {mergedRows && mergedRows.length > 0 && (
+        <Card className="border-slate-200 bg-slate-50/50 shadow-2xs">
+          <CardContent className="flex flex-col items-center gap-3 p-3 sm:flex-row">
+            <div className="flex items-center gap-2 text-slate-600">
+              <SlidersHorizontal className="h-3.5 w-3.5 text-slate-400" />
+              <span className="text-xs font-bold tracking-wide uppercase">
+                Stage Filter:
+              </span>
+            </div>
+            <div className="w-full sm:w-64">
+              <Select
+                value={selectedOriginFilter}
+                onValueChange={setSelectedOriginFilter}
+              >
+                <SelectTrigger className="h-8 border-slate-200 bg-white text-xs">
+                  <SelectValue placeholder="All Operational Blocks" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    All Stages ({availableOrigins.length})
+                  </SelectItem>
+                  {availableOrigins.map((origin) => (
+                    <SelectItem key={origin} value={origin}>
+                      {origin}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <span className="ml-auto text-[11px] font-medium text-slate-400">
+              Showing {filteredRows.length} rows
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* RENDER REPORT TABLE CONTAINER */}
       {!mergedRows ? (
         <div className="rounded-xl border border-dashed bg-slate-50/50 p-12 text-center text-slate-400">
           <FileSpreadsheet className="mx-auto mb-2 h-8 w-8 text-slate-300" />
@@ -757,19 +882,14 @@ export default function SkuFlatReportWithUomPage() {
       ) : filteredRows.length === 0 ? (
         <div className="rounded-xl border bg-slate-50/40 p-12 text-center text-slate-400">
           <p className="text-xs font-medium">
-            No active metrics match the SKU filter criteria "
-            {debouncedSearchQuery}".
+            No active metrics match the filter criteria.
           </p>
         </div>
       ) : (
         <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
           <CardHeader className="border-b border-slate-100 bg-slate-50 px-4 py-3">
             <CardTitle className="text-xs font-bold tracking-wider text-slate-800 uppercase">
-              Yield Profile:{" "}
-              {department === "all"
-                ? "All Divisions Consolidation"
-                : department.replace("kf_", "Kingsforth ")}{" "}
-              {isDetailed ? "(Detailed)" : ""}
+              Yield Profile Report
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -783,30 +903,29 @@ export default function SkuFlatReportWithUomPage() {
                     Item Description
                   </TableHead>
                   {isDetailed && (
-                    <TableHead className="w-[130px] text-xs font-bold text-slate-700">
+                    <TableHead className="w-[110px] text-xs font-bold text-slate-700">
                       Prod Date
                     </TableHead>
                   )}
+                  <TableHead className="w-[190px] text-xs font-bold text-slate-700">
+                    Operational Stage
+                  </TableHead>
                   <TableHead className="w-[160px] text-right text-xs font-bold text-slate-700">
-                    Total Extracted Value
+                    Value
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredRows.map((row, index) => (
                   <TableRow
-                    key={
-                      isDetailed
-                        ? `${row.item_code}_${row.prod_date}_${index}`
-                        : `${row.item_code}_${index}`
-                    }
+                    key={`${row.item_code}_${row.origin}_${index}`}
                     className="transition-colors hover:bg-slate-50/60"
                   >
                     <TableCell className="font-mono text-xs font-bold text-slate-900">
                       {row.item_code}
                     </TableCell>
                     <TableCell
-                      className="max-w-xs truncate text-xs text-slate-600"
+                      className="max-w-[220px] truncate text-xs text-slate-600"
                       title={row.item_description}
                     >
                       {row.item_description}
@@ -816,7 +935,12 @@ export default function SkuFlatReportWithUomPage() {
                         {row.prod_date}
                       </TableCell>
                     )}
-                    <TableCell className="text-right font-mono text-xs font-bold whitespace-nowrap text-blue-600">
+                    <TableCell>
+                      <span className="inline-flex items-center rounded-sm border border-blue-100 bg-blue-50/60 px-2 py-0.5 text-[10px] font-bold text-blue-800">
+                        {row.origin}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs font-bold whitespace-nowrap text-slate-900">
                       {row.combined_value.toLocaleString()}{" "}
                       <span className="ml-1 text-[10px] font-medium tracking-wide text-slate-400 uppercase">
                         {row.uom}
