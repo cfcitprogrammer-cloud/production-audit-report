@@ -216,6 +216,29 @@ export default function SkuFlatReportWithUomPage() {
       }
 
       const isAll = department === "all"
+      const isSf = isAll || department.startsWith("snackfood")
+
+      // Helper function explicitly typed to bypass dynamic table string inference errors
+      const fetchSf = async (
+        table: string,
+        selectFields: string
+      ): Promise<{ data: any[] | null }> => {
+        let query = supabase
+          .from(table as any) // Bypass strict table name inference
+          .select(selectFields)
+          .in("prod_id", generatedProdIds)
+
+        if (department === "snackfood_new") {
+          query = query.eq("is_new_building", true)
+        }
+        if (department === "snackfood_old") {
+          // Check for either explicitly false OR null
+          query = query.or("is_new_building.eq.false,is_new_building.is.null")
+        }
+
+        const { data } = await query
+        return { data: data as any[] | null }
+      }
 
       const [
         bhCooking,
@@ -272,49 +295,28 @@ export default function SkuFlatReportWithUomPage() {
           : Promise.resolve({ data: [] }),
 
         // --- Snackfood blocks ---
-        isAll || department === "snackfood"
-          ? supabase
-              .from("sf_blending")
-              .select("prod_id, item_code, usage")
-              .in("prod_id", generatedProdIds)
+        isSf
+          ? fetchSf("sf_blending", "prod_id, item_code, usage")
           : Promise.resolve({ data: [] }),
-        isAll || department === "snackfood"
-          ? supabase
-              .from("sf_premix")
-              .select("prod_id, item_code, usage")
-              .in("prod_id", generatedProdIds)
+        isSf
+          ? fetchSf("sf_premix", "prod_id, item_code, usage")
           : Promise.resolve({ data: [] }),
-        isAll || department === "snackfood"
-          ? supabase
-              .from("sf_mix")
-              .select("prod_id, item_code, weight")
-              .in("prod_id", generatedProdIds)
+        isSf
+          ? fetchSf("sf_mix", "prod_id, item_code, weight")
           : Promise.resolve({ data: [] }),
-        isAll || department === "snackfood"
-          ? supabase
-              .from("sf_frying")
-              .select("prod_id, item_code, weight")
-              .in("prod_id", generatedProdIds)
+        isSf
+          ? fetchSf("sf_frying", "prod_id, item_code, weight")
           : Promise.resolve({ data: [] }),
-        isAll || department === "snackfood"
-          ? supabase
-              .from("sf_flavoring")
-              .select("prod_id, item_code, weight")
-              .in("prod_id", generatedProdIds)
+        isSf
+          ? fetchSf("sf_flavoring", "prod_id, item_code, weight")
           : Promise.resolve({ data: [] }),
-        isAll || department === "snackfood"
-          ? supabase
-              .from("sf_piece")
-              .select("prod_id, item_code, pcs")
-              .in("prod_id", generatedProdIds)
+        isSf
+          ? fetchSf("sf_piece", "prod_id, item_code, pcs")
           : Promise.resolve({ data: [] }),
-        isAll || department === "snackfood"
-          ? supabase
-              .from("sf_fg")
-              .select("prod_id, item_code, qty")
-              .in("prod_id", generatedProdIds)
+        isSf
+          ? fetchSf("sf_fg", "prod_id, item_code, qty")
           : Promise.resolve({ data: [] }),
-        isAll || department === "snackfood"
+        isSf
           ? supabase.from("sf_sku").select("item_code, item_description, uom")
           : Promise.resolve({ data: [] }),
 
@@ -681,7 +683,13 @@ export default function SkuFlatReportWithUomPage() {
                 <SelectContent>
                   <SelectItem value="all">All Departments</SelectItem>
                   <SelectItem value="bihon">Bihon</SelectItem>
-                  <SelectItem value="snackfood">Snackfood</SelectItem>
+                  <SelectItem value="snackfood">Snackfood (All)</SelectItem>
+                  <SelectItem value="snackfood_new">
+                    Snackfood (New Bldg)
+                  </SelectItem>
+                  <SelectItem value="snackfood_old">
+                    Snackfood (Old Bldg)
+                  </SelectItem>
                   <SelectItem value="catmon">Catmon</SelectItem>
                   <SelectItem value="kf_sotanghon">KF Sotanghon</SelectItem>
                   <SelectItem value="kf_hobe">KF Hobe Express</SelectItem>
